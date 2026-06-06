@@ -1556,6 +1556,9 @@ function renderMonthlyReconciliation() {
       const fPaid  = fTxns.filter(t => t.type === 'payment').reduce((s, t) => s + parseFloat(t.amount), 0);
       const closingBal = openingBal + fRec - fPaid;
 
+      // Hide funds with no balance and no activity
+      if (openingBal === 0 && fRec === 0 && fPaid === 0 && closingBal === 0) return;
+
       typeOpenBal  += openingBal;
       typeRec      += fRec;
       typePaid     += fPaid;
@@ -1575,6 +1578,8 @@ function renderMonthlyReconciliation() {
     grandRec     += typeRec;
     grandPaid    += typePaid;
     grandClosing += typeClosing;
+
+    if (rows === '') return; // all funds in this type were empty — skip section
 
     html += `<div class="recon-section" style="margin-bottom:24px">
       <div class="recon-head">${typeTitles[type]} — ${periodLabel}</div>
