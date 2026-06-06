@@ -876,30 +876,43 @@ function showSync(state, msg) {
   if (state !== 'syncing') syncTimer = setTimeout(() => el.classList.remove('show'), 3000);
 }
 
-// ── Load from Firestore (with localStorage fallback)
+// ── Load from Firestore (with 8-second timeout + localStorage fallback)
 async function loadDB() {
+  // Always try localStorage first as instant fallback
+  const localSaved = localStorage.getItem('imprest_db_horowpothana');
+
   if (firestore) {
     try {
-      const snap = await firestore.collection(FIRESTORE_COL).doc(FIRESTORE_DOC).get();
+      document.getElementById('loading-msg').textContent = 'Connecting to cloud database…';
+      // Race Firestore against an 8-second timeout — app never gets stuck
+      const firestoreGet = firestore.collection(FIRESTORE_COL).doc(FIRESTORE_DOC).get();
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), 8000)
+      );
+      const snap = await Promise.race([firestoreGet, timeout]);
       if (snap.exists && snap.data().funds && snap.data().funds.length > 0) {
         db = snap.data();
-        // also cache locally
         localStorage.setItem('imprest_db_horowpothana', JSON.stringify(db));
         return;
       }
     } catch(e) {
-      console.warn('Firestore load failed, trying localStorage:', e);
+      console.warn('Firestore load failed, falling back to localStorage:', e.message);
+      document.getElementById('loading-msg').textContent =
+        e.message === 'timeout'
+          ? '⚠️ Cloud timeout — using local data'
+          : '⚠️ Cloud error — using local data';
     }
   }
+
   // Fallback to localStorage
-  const saved = localStorage.getItem('imprest_db_horowpothana');
-  if (saved) {
-    db = JSON.parse(saved);
+  if (localSaved) {
+    db = JSON.parse(localSaved);
     return;
   }
+
   // Fresh install — seed defaults
   db.funds = DEFAULT_FUNDS.map(f => ({ ...f, id: uid(), createdAt: new Date().toISOString() }));
-  await saveDB();
+  saveDB(); // fire-and-forget, don't await
 }
 
 // ── Save to Firestore + localStorage backup (fire-and-forget safe)
@@ -914,11 +927,13 @@ function saveDB() {
     saveDebounceTimer = setTimeout(async () => {
       try {
         showSync('syncing', 'Saving to cloud…');
-        await firestore.collection(FIRESTORE_COL).doc(FIRESTORE_DOC).set(db);
-        showSync('synced', 'Saved to cloud');
+        const savePromise = firestore.collection(FIRESTORE_COL).doc(FIRESTORE_DOC).set(db);
+        const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000));
+        await Promise.race([savePromise, timeout]);
+        showSync('synced', 'Saved to cloud ✓');
       } catch(e) {
-        console.warn('Firestore save error:', e);
-        showSync('error', 'Cloud save failed — data saved locally');
+        console.warn('Firestore save error:', e.message);
+        showSync('error', 'Cloud save failed — data safe locally');
       }
       resolve();
     }, 600);
