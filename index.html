@@ -840,10 +840,7 @@ function initFirebase() {
     }
     firebase.initializeApp(firebaseConfig);
     firestore = firebase.firestore();
-    // Enable offline persistence so the app works without internet
-    firestore.enablePersistence({ synchronizeTabs: true }).catch(err => {
-      console.warn('Offline persistence unavailable:', err.code);
-    });
+    // NOTE: enablePersistence() removed — it can silently stall first load
     return true;
   } catch(e) {
     console.error('Firebase init error:', e);
@@ -1904,7 +1901,18 @@ async function init() {
   setTimeout(() => overlay.remove(), 500);
 }
 
-init();
+// Hard failsafe — overlay always removed after 12s no matter what
+const _failsafeTimer = setTimeout(() => {
+  const ov = document.getElementById('loading-overlay');
+  if (ov) { ov.classList.add('hidden'); setTimeout(() => ov.remove(), 500); }
+}, 12000);
+
+init().catch(e => {
+  console.error('Init error:', e);
+  clearTimeout(_failsafeTimer);
+  const ov = document.getElementById('loading-overlay');
+  if (ov) { ov.classList.add('hidden'); setTimeout(() => ov.remove(), 500); }
+});
 // ═══════════════════════════════════════════════════
 //  AMOUNT INPUT FORMATTING
 // ═══════════════════════════════════════════════════
