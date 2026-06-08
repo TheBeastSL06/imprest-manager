@@ -876,39 +876,51 @@ function showSync(state, msg) {
 
 // ── Load from Firestore (with 8-second timeout + localStorage fallback)
 async function loadDB() {
-  // Always try localStorage first as instant fallback
   const localSaved = localStorage.getItem('imprest_db_horowpothana');
 
   if (firestore) {
-    try {
-      document.getElementById('loading-msg').textContent = 'Connecting to cloud database…';
-      // Race Firestore against an 8-second timeout — app never gets stuck
-      const firestoreGet = firestore.collection(FIRESTORE_COL).doc(FIRESTORE_DOC).get();
-      const timeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('timeout')), 8000)
-      );
-      const snap = await Promise.race([firestoreGet, timeout]);
-      if (snap.exists && snap.data().funds && snap.data().funds.length > 0) {
-        db = snap.data();
-        localStorage.setItem('imprest_db_horowpothana', JSON.stringify(db));
-        return;
+    // Try Firestore up to 2 times with a 20-second timeout each
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        document.getElementById('loading-msg').textContent =
+          attempt === 1 ? 'Connecting to cloud database…' : 'Retrying connection…';
+        const firestoreGet = firestore.collection(FIRESTORE_COL).doc(FIRESTORE_DOC).get();
+        const timeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), 20000)
+        );
+        const snap = await Promise.race([firestoreGet, timeout]);
+        if (snap.exists) {
+          db = snap.data();
+          db.funds        = db.funds        || [];
+          db.transactions = db.transactions || [];
+          localStorage.setItem('imprest_db_horowpothana', JSON.stringify(db));
+          return; // Firestore load succeeded
+        } else {
+          break; // Doc doesn't exist yet, fall through to local/defaults
+        }
+      } catch(e) {
+        console.warn('Firestore attempt ' + attempt + ' failed:', e.message);
+        if (attempt === 2) {
+          document.getElementById('loading-msg').textContent =
+            '⚠️ Cloud unreachable — using locally cached data';
+        }
       }
-    } catch(e) {
-      console.warn('Firestore load failed, falling back to localStorage:', e.message);
-      document.getElementById('loading-msg').textContent =
-        e.message === 'timeout'
-          ? '⚠️ Cloud timeout — using local data'
-          : '⚠️ Cloud error — using local data';
     }
   }
 
-  // Fallback to localStorage
+  // Fallback: use localStorage cache from previous successful Firestore load
   if (localSaved) {
-    db = JSON.parse(localSaved);
-    return;
+    try {
+      db = JSON.parse(localSaved);
+      db.funds        = db.funds        || [];
+      db.transactions = db.transactions || [];
+      return;
+    } catch(e) {
+      console.warn('localStorage parse error:', e);
+    }
   }
 
-  // Fresh install — seed defaults
+  // Truly fresh install with no cloud data — seed defaults
   db.funds = DEFAULT_FUNDS.map(f => ({ ...f, id: uid(), createdAt: new Date().toISOString() }));
   saveDB(); // fire-and-forget, don't await
 }
